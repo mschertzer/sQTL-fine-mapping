@@ -1,0 +1,331 @@
+---
+title: "SuSie to fine map iPSC sQTLs"
+output: html_notebook
+---
+
+```{r}
+install.packages("susieR")
+```
+
+```{r}
+library(susieR)
+```
+
+# Test data
+# The simulated data is expression level of a gene (𝑦) in 𝑁≈600 individuals
+```{r}
+set.seed(1)
+data(N3finemapping)
+attach(N3finemapping)
+```
+
+# simulated 2 sets of 𝑌 as 2 simulation replicates
+```{r}
+dim(Y)
+
+# true signals
+b <- true_coef[,1]
+plot(b, pch=16, ylab='effect size')
+which(b != 0)
+```
+
+Summary statistics of genetic association studies typically contain effect size (𝛽̂  coefficient from regression), p-value and minor allele frequencies. These information can be used to perform fine-mapping with given an additional input of correlation matrix between variables. The correlation matrix in genetics is typically referred to as LD matrix (LD for linkage disequilibrium). One may use external reference panels to estimate it when this matrix cannot be obtained from samples directly. Caution that LD matrix here has to be correlation matrix 𝑟, not 𝑟2 or 𝑎𝑏𝑠(𝑟).
+
+univariate_regression function can be used to compute summary statistics by fitting univariate simple regression variable by variable. The results are 𝛽̂  and 𝑆𝐸(𝛽̂ ) from which z-scores can be derived. Alternatively you can obtain z-scores from 𝛽̂  and p-values if you are provided with those information. Again we focus only on results from the first data-set:
+
+```{r}
+# beta and beta se
+sumstats <- univariate_regression(X, Y[,1])
+# can calculate z scores from this
+z_scores <- sumstats$betahat / sumstats$sebetahat
+susie_plot(z_scores, y = "z", b=b)
+```
+
+```{r}
+# correlation matrix (LD matrix)
+# I can't calculate this for my data, I'll have to find an LD matrix- check Alkes Price
+R <- cor(X)
+```
+
+SuSiE regression with summary statistics is implemented as susie_rss function
+```{r}
+# For starters, we assume there are at most 10 causal variables, i.e. set L = 10, although SuSiE is generally robust to the choice of L.
+# summary stats
+fitted_rss <- susie_rss(z_scores, R, L = 10)
+summary(fitted_rss)$cs
+susie_plot(fitted_rss, y="PIP", b=b)
+
+# versus original data
+fitted = susie(X, Y[,1], L = 10)
+plot(fitted$pip, fitted_rss$pip, ylim=c(0,1))
+```
+
+211105
+Use the code here: https://storage.googleapis.com/broad-alkesgroup-public/UKBB_LD/readme_ld.txt
+and maybe here: https://github.com/RajLabMSSM/echolocatoR/blob/0ccf40d2f126f755074e731f82386e4e01d6f6bb/R/UKBiobank_LD.R to generate UKbiobank LD matrices
+Biobank data is already downloaded on the cluster: /gpfs/commons/groups/knowles_lab/data/ldsc/polyfun/ukb_ld
+
+```{r}
+# install.packages("reticulate")
+library(reticulate)
+py_install("numpy")
+py_install("pandas")
+
+```
+
+```{python}
+# from Alkes Price group
+import numpy as np
+import pandas as pd
+import scipy.sparse as sparse
+def load_ld_npz(ld_prefix):
+    
+    #load the SNPs metadata
+    gz_file = '%s.gz'%(ld_prefix)
+    df_ld_snps = pd.read_table(gz_file, sep='\s+')
+    df_ld_snps.rename(columns={'rsid':'SNP', 'chromosome':'CHR', 'position':'BP', 'allele1':'A1', 'allele2':'A2'}, inplace=True, errors='ignore')
+    assert 'SNP' in df_ld_snps.columns
+    assert 'CHR' in df_ld_snps.columns
+    assert 'BP' in df_ld_snps.columns
+    assert 'A1' in df_ld_snps.columns
+    assert 'A2' in df_ld_snps.columns
+    df_ld_snps.index = df_ld_snps['CHR'].astype(str) + '.' + df_ld_snps['BP'].astype(str) + '.' + df_ld_snps['A1'] + '.' + df_ld_snps['A2']
+        
+    #load the LD matrix
+    npz_file = '%s.npz'%(ld_prefix)
+    try: 
+        R = sparse.load_npz(npz_file).toarray()
+        R += R.T
+    except ValueError:
+        raise IOError('Corrupt file: %s'%(npz_file))
+
+    #create df_R and return it
+    df_R = pd.DataFrame(R, index=df_ld_snps.index, columns=df_ld_snps.index)
+    return df_R, df_ld_snps
+```
+
+
+```{r}
+# from David's read_ld.R script
+require(reticulate)
+library(Matrix)
+
+read_ld = function(fn) {
+    np <- import("numpy")
+    npz <- np$load(fn)
+    R_lower = sparseMatrix(i = npz$f[["row"]], 
+                           j = npz$f[["col"]],
+                           dims = npz$f[["shape"]], 
+                           x = as.numeric(npz$f[["data"]]),
+                           index1 = F)
+    R_lower + t(R_lower) 
+}
+
+basedir = "/gpfs/commons/groups/knowles_lab/data/ldsc/polyfun/ukb_ld/"
+R = read_ld(paste0(basedir, "chr11_53000001_56000001.npz2") )
+R[1:5,1:5]
+
+# check input files
+require("data.table")
+
+# 13,886 SNPs
+# index column 1-13886
+snps = fread(paste0(basedir, "chr11_53000001_56000001.gz"))
+
+# 13886 x 13886 sparse Matrix of class "dgCMatrix"
+np <- import("numpy")
+npz <- np$load(paste0(basedir, "chr11_53000001_56000001.npz2"))
+R_lower = sparseMatrix(i = npz$f[["row"]], 
+                           j = npz$f[["col"]],
+                           dims = npz$f[["shape"]], 
+                           x = as.numeric(npz$f[["data"]]),
+                           index1 = F)
+as.matrix(R[myindices, myindices])
+```
+
+
+```{r}
+# start with summary stats
+# do one chromosome at a time
+
+stats = read_tsv("~/ipsc_sqtl/SplicingLevel/full_qtl_results_1.Pval-rescaled.txt")
+junc_data = stats %>% filter(gene == "chr1:21779923:21781349:clu_25061") 
+chrom = junc_data$chr[1]
+snp_range_start = min(junc_data$snp_pos)
+snp_range_end = max(junc_data$snp_pos)
+
+blocks = tibble( fn = list.files(basedir, glob2rx("*.gz")) ) %>% 
+    mutate(stub = substr(fn, 1, nchar(fn) - 3)) %>% # this can go outside the loop
+    separate(stub, c("chr", "start", "end"), convert = T, remove = F)
+
+theblock = blocks %>% filter(chr == paste0("chr", chrom), start < snp_range_start, snp_range_end < end ) %>% head(1)
+
+
+R = read_ld(paste0(basedir, theblock$stub, ".npz") )
+snps = read_tsv(paste0(basedir, theblock$fn)) %>% 
+    mutate(ind = 1:n())
+joined = snps %>% inner_join(junc_data, by = c(chromosome = "chr", position = "snp_pos"))
+mean(joined$allele1 == joined$ref) # 1 :) 
+R_sub = as.matrix(R[joined$ind,joined$ind])
+```
+
+
+```{r}
+z_scores = joined$beta / joined$se
+fitted_rss <- susie_rss(z_scores, R_sub, L = 5)
+summary(fitted_rss)$cs
+fitted_rss
+susie_plot(fitted_rss, y="PIP")
+joined$pip = fitted_rss$pip
+```
+
+### 211116 ###
+Adapt what David and I wrote to a loop format
+
+```{r}
+# load required packages
+require(reticulate)
+library(Matrix)
+require(doMC)
+library(foreach)
+library(pryr)
+
+# function imports npz lower diagonal of reference LD matrix
+read_ld = function(fn) {
+    np <- import("numpy")
+    npz <- np$load(fn)
+    R_lower = sparseMatrix(i = npz$f[["row"]], 
+                           j = npz$f[["col"]],
+                           dims = npz$f[["shape"]], 
+                           x = as.numeric(npz$f[["data"]]),
+                           index1 = F)
+    R_lower + t(R_lower) 
+}
+
+# this can be done outside of the loop
+# create a dataframe with all of the bin information for the LD matrices
+basedir = "/gpfs/commons/groups/knowles_lab/data/ldsc/polyfun/ukb_ld/"
+blocks = tibble( fn = list.files(basedir, glob2rx("*.gz")) ) %>% 
+    mutate(stub = substr(fn, 1, nchar(fn) - 3)) %>%
+    separate(stub, c("chr", "start", "end"), convert = T, remove = F)
+
+# read in the sQTL mapped file and find the corresponding LD matrix for each junction-snp pair
+registerDoMC(10)
+stats = read_tsv("~/ipsc_sqtl/SplicingLevel/full_qtl_results_1.Pval-rescaled.txt.gz")
+stats_grouped = stats %>% group_by(gene) %>% summarize() %>% ungroup() %>% head(3)
+#stats %>% filter(gene == "chr1:10002840:10003407:clu_24602"	)
+
+fine_map = foreach(id = 1:nrow(stats_grouped), .combine = bind_rows) %dopar% {
+    bin = as.character(stats_grouped[id, ])
+    junc_data = stats %>% filter(gene == bin)
+    chrom = junc_data$chr[1]  
+    snp_range_start = min(junc_data$snp_pos)
+    snp_range_end = max(junc_data$snp_pos)
+    
+    # find the proper npz file for the current junction-snp pairs
+    theblock = blocks %>% filter(chr == paste0("chr", chrom), start < snp_range_start, snp_range_end < end ) %>% head(1)
+    
+    # this file has the lower matrix
+    R = read_ld(paste0(basedir, theblock$stub, ".npz") )
+    
+    # this file has the corresponding snp info for the matrix, add an index column here for merging later
+    snps = read_tsv(paste0(basedir, theblock$fn)) %>% 
+        mutate(ind = 1:n())
+    #snps %>% group_by(rsid) %>% summarize(n = n()) %>% filter(n > 1)
+    #snps %>% filter(rsid == "rs112108829")
+    
+    # inner join, the snp info file with sQTL file- subsets to only snps that we have sQTL info for
+    # important here to merge with allele info since some SNPs will have multiple alt alleles
+    # there are some sQTLs that don't have a corresponding SNP id in the matrix- so these are not included- in this first example, there are 8
+    joined = snps %>% inner_join(junc_data, by = c(chromosome = "chr", position = "snp_pos", allele1 = "ref", allele2 = "alt"))
+    
+    # subset the LD matrix for only snps with sQTL info
+    R_sub = as.matrix(R[joined$ind,joined$ind])
+    
+    # calculate z scores
+    z_scores = joined$beta / joined$se
+    
+    # run SuSie using summary statistics, can change L here
+    fitted_rss <- susie_rss(z_scores, R_sub, L = 5)
+    susie_plot(fitted_rss, y="PIP")
+    joined$pip = fitted_rss$pip
+    joined %>% select(gene, rsid, position, allele1, allele2, beta, se, pvalue, pip)
+}
+
+
+# checking alleles match between files 
+# mean(joined$allele1 == joined$ref) # 1 :) 
+# fine_map %>% group_by(position) %>% summarize(n=n()) %>% filter(n > 1)
+```
+
+```{r}
+# test outside of loop
+stats = read_tsv("~/ipsc_sqtl/SplicingLevel/full_qtl_results_22.Pval-rescaled.txt.gz")
+stats_grouped = stats %>% group_by(gene) %>% summarize() %>% ungroup()
+junc_data = stats %>% filter(gene == "chr1:10002840:10003307:clu_24602") # 537
+stats %>% filter(gene == "chr1:10002840:10003407:clu_24602")
+
+chrom = junc_data$chr[1]  
+snp_range_start = min(junc_data$snp_pos)
+snp_range_end = max(junc_data$snp_pos)
+theblock = blocks %>% filter(chr == paste0("chr", chrom), start < snp_range_start, snp_range_end < end ) %>% head(1)
+
+R = read_ld(paste0(basedir, theblock$stub, ".npz") )
+object_size(R) # 5G
+snps = read_tsv(paste0(basedir, theblock$fn)) %>% # 20,725
+    mutate(ind = 1:n())
+joined = snps %>% inner_join(junc_data, by = c(chromosome = "chr", position = "snp_pos")) # 530, 7 aren't matching
+not_joined = junc_data %>% anti_join(snps, by = c(chr = "chromosome", snp_pos = "position", ref  = "allele1", alt = "allele2"))
+not_joined %>% filter(snp_pos %in% joined$snp_pos)
+snps %>% filter(position == "9999427")
+snps %>% filter(position > "9999300" & position < "9999500")
+
+dup = joined %>% select(-1, -4, -5, -6, chr = chromosome, snp_pos = position) %>% bind_rows(not_joined) %>% filter(duplicated(.[["snp_pos"]]))
+snps %>% filter(position == 10246471)
+snps %>% group_by(rsid) %>% summarize(n = n()) %>% filter(n > 1)
+R_sub = as.matrix(R[joined$ind,joined$ind])
+object_size(R_sub) #2M
+z_scores = joined$beta / joined$se
+fitted_rss <- susie_rss(z_scores, R_sub, L = 5)
+object_size(fitted_rss)
+susie_plot(fitted_rss, y="PIP")
+joined$pip = fitted_rss$pip
+joined %>% select(gene, rsid, position, allele1, allele2, beta, se, pvalue, pip)
+
+
+```
+
+
+```{r}
+test = read_tsv("~/ipsc_sqtl/fine_mapped/ipsc_sqtl_finemapped_L10_chr22.txt.gz", col_names = TRUE, show_col_types = FALSE)
+test_group = test %>% group_by(gene) %>% summarise() %>% ungroup() %>% head(5)
+
+foreach(group = 1:nrow(test_group)) %do% {
+    id = as.character(test_group[group, ])
+    data = test %>% filter(gene == id)
+    ggplot(data, aes(x = position, y = pip)) + geom_point()
+}
+```
+
+```{r, warning=FALSE}
+# beta = effect size
+l5 = read_tsv("~/ipsc_sqtl/test/ipsc_sqtl_finemapped_chr22.txt.gz") %>% # 630,346
+    select(gene, rsid, chromosome, position, allele1, allele2, beta, se, pip)
+
+l5 %>% ggplot(aes(x = pip)) + geom_histogram() + scale_y_continuous(trans='log10')
+l5 %>% filter(pip > 0.95) %>% arrange(desc(beta)) # 243
+#l5 %>% arrange(beta)
+
+
+l10 = read_tsv("~/ipsc_sqtl/fine_mapped/ipsc_sqtl_finemapped_L10_chr22.txt.gz") %>%
+    select(gene, rsid, chromosome, position, allele1, allele2, beta, se, pip)
+
+l10 %>% ggplot(aes(x = pip)) + geom_histogram() + scale_y_continuous(trans='log10')
+l10 %>% filter(pip > 0.95) %>% arrange(desc(beta)) # 307
+#l10 %>% arrange(beta)
+```
+
+
+export SACCT_FORMAT="JobID,JobName,Partition,Elapsed,CPUTime,TotalCPU,MaxRSS,State,ExitCode"
+
+6, 8, 16
