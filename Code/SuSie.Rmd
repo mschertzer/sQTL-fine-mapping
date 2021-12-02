@@ -3,12 +3,20 @@ title: "SuSie to fine map iPSC sQTLs"
 output: html_notebook
 ---
 
+```{r setup}
+path="/gpfs/commons/home/mschertzer/ipsc_sqtl/"
+knitr::opts_knit$set(root.dir = normalizePath(path)) 
+```
+
+
 ```{r}
 install.packages("susieR")
 ```
 
 ```{r}
 library(susieR)
+library(tidyverse)
+
 ```
 
 # Test data
@@ -205,15 +213,23 @@ read_ld = function(fn) {
 # this can be done outside of the loop
 # create a dataframe with all of the bin information for the LD matrices
 basedir = "/gpfs/commons/groups/knowles_lab/data/ldsc/polyfun/ukb_ld/"
-blocks = tibble( fn = list.files(basedir, glob2rx("*.gz")) ) %>% 
-    mutate(stub = substr(fn, 1, nchar(fn) - 3)) %>%
-    separate(stub, c("chr", "start", "end"), convert = T, remove = F)
+#blocks = tibble( fn = list.files(basedir, glob2rx("*.gz")) ) %>% 
+#    mutate(stub = substr(fn, 1, nchar(fn) - 3)) %>%
+#    separate(stub, c("chr", "start", "end"), convert = T, remove = F)
+blocks = tibble( fn = list.files(basedir, glob2rx("*.npz")), 
+                 size = file.info(dir(path = basedir, full.names = TRUE, pattern = "*.npz"))$size) %>%
+  mutate(stub = substr(fn, 1, nchar(fn) - 4)) %>%
+  separate(stub, c("chr", "start", "end"), convert = T, remove = F)
+  
 
 # read in the sQTL mapped file and find the corresponding LD matrix for each junction-snp pair
-registerDoMC(10)
-stats = read_tsv("~/ipsc_sqtl/SplicingLevel/full_qtl_results_1.Pval-rescaled.txt.gz")
-stats_grouped = stats %>% group_by(gene) %>% summarize() %>% ungroup() %>% head(3)
+registerDoMC(1)
+stats = read_tsv("~/ipsc_sqtl/Data/full_qtl_results_6.Pval-rescaled.txt.gz")
+stats_grouped = stats %>% group_by(gene) %>% summarize() %>% ungroup()
+stats_grouped = stats_grouped[611:615,]
+
 #stats %>% filter(gene == "chr1:10002840:10003407:clu_24602"	)
+stats_grouped
 
 fine_map = foreach(id = 1:nrow(stats_grouped), .combine = bind_rows) %dopar% {
     bin = as.character(stats_grouped[id, ])
@@ -260,15 +276,20 @@ fine_map = foreach(id = 1:nrow(stats_grouped), .combine = bind_rows) %dopar% {
 
 ```{r}
 # test outside of loop
-stats = read_tsv("~/ipsc_sqtl/SplicingLevel/full_qtl_results_22.Pval-rescaled.txt.gz")
+stats = read_tsv("~/ipsc_sqtl/Data/full_qtl_results_6.Pval-rescaled.txt.gz")
 stats_grouped = stats %>% group_by(gene) %>% summarize() %>% ungroup()
-junc_data = stats %>% filter(gene == "chr1:10002840:10003307:clu_24602") # 537
-stats %>% filter(gene == "chr1:10002840:10003407:clu_24602")
+junc_data = stats %>% filter(gene == "chr6:101075377:101075466:clu_17588") # 537
+stats %>% filter(gene == "chr6:29989538:30025892:clu_16908")
+stats_grouped = stats_grouped[611:615,]
 
 chrom = junc_data$chr[1]  
 snp_range_start = min(junc_data$snp_pos)
 snp_range_end = max(junc_data$snp_pos)
-theblock = blocks %>% filter(chr == paste0("chr", chrom), start < snp_range_start, snp_range_end < end ) %>% head(1)
+theblock = blocks %>% filter(chr == paste0("chr", chrom), start < snp_range_start, snp_range_end < end ) %>% arrange(size)
+nrow(theblock)
+if(nrow(theblock) == 0) {
+  cat("it didnt worked")
+}
 
 R = read_ld(paste0(basedir, theblock$stub, ".npz") )
 object_size(R) # 5G
@@ -292,7 +313,7 @@ susie_plot(fitted_rss, y="PIP")
 joined$pip = fitted_rss$pip
 joined %>% select(gene, rsid, position, allele1, allele2, beta, se, pvalue, pip)
 
-
+blocks %>% filter(chr == "chr6") %>% arrange(start)
 ```
 
 
@@ -325,7 +346,23 @@ l10 %>% filter(pip > 0.95) %>% arrange(desc(beta)) # 307
 #l10 %>% arrange(beta)
 ```
 
+# 211123
 
-export SACCT_FORMAT="JobID,JobName,Partition,Elapsed,CPUTime,TotalCPU,MaxRSS,State,ExitCode"
+Compare L10 versus L5
+I care about binary scores- 0 or 1, since those are the confident SNPs
 
-6, 8, 16
+```{r, warning=FALSE}
+l5 <- read_tsv("fine_mapped/ipsc_sqtl_finemapped_chr22.txt.gz")
+l10 <- read_tsv("fine_mapped/ipsc_sqtl_finemapped_L10_chr22.txt.gz")
+
+all = l5 %>% full_join(l10, by = c("rsid", "chromosome", "position", "allele1", "allele2", "gene", "beta", "se", "pvalue"), suffix = c(".l5", ".l10")) %>% select(-ind.l5, -ind.l10)
+all %>% ggplot(aes(x = pip.l5, y = pip.l10)) + geom_point(alpha = 0.2) + ylab("SuSie L10 PIPs") + xlab("SuSie L5 PIPs")
+ggsave("plots/211123_l5_v_l10_pips.png", width = 5, height = 5)
+```
+
+
+
+
+
+
+
