@@ -1,6 +1,6 @@
 #!/bin/bash
 
-module load R/3.4.4
+module load R/4.1.1
 
 CORES=4
 

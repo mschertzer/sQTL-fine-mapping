@@ -1,10 +1,5 @@
 #!/usr/bin/env Rscript
 
-# usage is: Rscript susie_for_UKB_LD.R <chromosome> <cores> <error handling>
-# example for chr6 with 5 cores and : Rscript susie_for_UKB_LD.R 6 5 TRUE
-# I recommend starting with TRUE for error handling
-args = commandArgs(trailingOnly=TRUE)
-
 # load required packages
 require(reticulate)
 require(Matrix)
@@ -14,6 +9,19 @@ require(readr)
 require(tidyverse)
 require(susieR)
 require(Rfast)
+#require(optparse)
+
+# command line arguments
+# usage is: Rscript susie_for_UKB_LD.R <chromosome> <cores> <error handling>
+# example for chr6 with 5 cores and : Rscript susie_for_UKB_LD.R 6 5 TRUE
+# I recommend starting with TRUE for error handling
+args = commandArgs(trailingOnly=TRUE)
+
+# arguments <- parse_args(OptionParser(usage = "%prog [options]",
+#                                      option_list=list(
+#                                        make_option(c("--chrom"), default = 1, type = "double", help = "The chromosome to perform the fine mapping on. [Default %default]."),
+#                                        make_option(c("--cores"), default = 1, type = "double", help = "Number of cores used. [Default %default]"),
+#                                        make_option(c("--errorHandling"), default = TRUE, type = "logical", help = "This determines how the foreach loop handles errors. [Default %default], execution will be stopped, while FALSE will allow the loop to continue."))))
 
 # function imports npz lower diagonal of reference LD matrix
 read_ld = function(fn) {
@@ -44,10 +52,10 @@ registerDoMC(args[2])
 
 # if command line specifies TRUE, then errors within the loop, execution will be stopped. I recommend this option when running for the first time
 # chr6 throws errors because of the MHC region which has extremely long-range LD regions- for this, I would use FALSE which will still continue if there is an error but will not return the output for that iteration
-if(args[3] == TRUE) {
-  error == "stop"
+if(as.logical(args[3]) == TRUE) {
+  error <- "stop"
   } else{
-    error == "remove"
+    error <- "remove"
 }
 
 fine_map = foreach(id = 1:nrow(stats_grouped), .combine = bind_rows, .errorhandling = error) %dopar% {
@@ -107,5 +115,5 @@ fine_map = foreach(id = 1:nrow(stats_grouped), .combine = bind_rows, .errorhandl
 
 warnings()
 
-output = paste0("~/ipsc_sqtl/fine_mapped/ipsc_sqtl_finemapped_L10_chr", args[1], ".txt.gz")
+output = paste0("~/ipsc_sqtl/test/ipsc_sqtl_finemapped_L10_chr", args[1], ".txt.gz")
 write_tsv(fine_map, output, col_names = TRUE)

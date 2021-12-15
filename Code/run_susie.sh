@@ -6,4 +6,4 @@
 
 module load R/4.1.1
 
-Rscript /gpfs/commons/home/mschertzer/ipsc_sqtl/Code/susie_for_UKB_LD.R $1 $2 $3
+Rscript ~/ipsc_sqtl/Code/susie_for_UKB_LD.R $1 $2 $3
